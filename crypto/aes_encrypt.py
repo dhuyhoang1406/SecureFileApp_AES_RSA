@@ -129,9 +129,9 @@ with open("test.txt", "w") as f:
     f.write("Hello AES encryption!")
 
 # You can use 16, 24, or 32 bytes key
-# key = b"thisisakey123456"        # AES-128
+key = b"thisisakey123456"        # AES-128
 # key = b"thisisakey12345612345678"  # AES-192
-key = b"thisisakey1234561234567812345678"  # AES-256
+# key = b"thisisakey1234561234567812345678"  # AES-256
 
 encrypt_file("test.txt", "test.enc", key)
 print("File encrypted!")
