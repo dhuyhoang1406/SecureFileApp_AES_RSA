@@ -2,6 +2,8 @@ import requests
 import json
 from PyQt5.QtCore import QThread, pyqtSignal
 from utils.config import API_BASE_URL, DEMO_MODE
+from utils.helpers import CryptoUtils
+import os
 
 class APIService:
     def __init__(self):
@@ -103,10 +105,10 @@ class APIService:
             }, 200
         
         try:
-            import os, base64, secrets
+            import os
             filename = os.path.basename(file_path)
-            # Tạo AES key ngẫu nhiên 256-bit (base64)
-            aes_key = base64.b64encode(secrets.token_bytes(32)).decode()
+            # Tạo AES key ngẫu nhiên 128-bit (base64)
+            aes_key = CryptoUtils.generate_aes_key()
             payload = {
                 'filename': filename,
                 'filePath': file_path,
@@ -161,7 +163,17 @@ class APIService:
                 f'{self.base_url}/file/list',
                 headers=self.get_headers()
             )
-            return response.json(), response.status_code
+            result = response.json()
+
+            # Normalize backend response: backend returns { error:0, files: [...] }
+            if isinstance(result, dict):
+                if 'files' in result and 'data' not in result:
+                    normalized = {'error': result.get('error', 0), 'data': result.get('files', [])}
+                    return normalized, response.status_code
+                # already in expected shape
+                return result, response.status_code
+
+            return result, response.status_code
         except Exception as e:
             return {'error': str(e)}, 500
     
@@ -186,6 +198,7 @@ class APIService:
                 json=data,
                 headers=self.get_headers()
             )
+            # backend returns { error:0, message:.. } — return as-is
             return response.json(), response.status_code
         except Exception as e:
             return {'error': str(e)}, 500
@@ -210,7 +223,68 @@ class APIService:
                 f'{self.base_url}/user/get-key',
                 headers=self.get_headers()
             )
+            result = response.json()
+            # backend returns { error:0, data: { publicKey, privateKey } }
+            return result, response.status_code
+        except Exception as e:
+            return {'error': str(e)}, 500
+
+    def logout(self):
+        """Logout: gọi backend để invalidate token (blacklist)"""
+        if self.demo_mode:
+            # In demo mode just clear local token
+            self.set_token(None)
+            self.set_user_id(None)
+            return {'error': 0, 'message': 'Logout (DEMO MODE)'}, 200
+
+        try:
+            response = requests.post(
+                f'{self.base_url}/auth/logout',
+                headers=self.get_headers()
+            )
+            # Clear local token if backend accepted
+            if response.status_code == 200:
+                self.set_token(None)
+                self.set_user_id(None)
             return response.json(), response.status_code
+        except Exception as e:
+            return {'error': str(e)}, 500
+    
+    def encrypt_and_upload_file(self, file_path):
+        """
+        Mã hóa file và upload lên backend.
+        """
+        try:
+            # Mã hóa file
+            encrypted_file_path = f"{file_path}.enc"
+            aes_key = CryptoUtils.generate_aes_key()
+            CryptoUtils.encrypt_file(file_path, encrypted_file_path, aes_key)
+
+            # Upload file đã mã hóa
+            filename = os.path.basename(file_path)
+            payload = {
+                'filename': filename,
+                'filePath': encrypted_file_path,
+                'aesKey': aes_key
+            }
+            response = requests.post(
+                f'{self.base_url}/file/upload',
+                json=payload,
+                headers=self.get_headers()
+            )
+            return response.json(), response.status_code
+        except Exception as e:
+            return {'error': str(e)}, 500
+
+    def download_and_decrypt_file(self, file_path, aes_key):
+        """
+        Tải file từ backend và giải mã.
+        """
+        try:
+            # Tạm thời return placeholder - cần implement download API
+            decrypted_file_path = file_path.replace(".enc", ".dec")
+            CryptoUtils.decrypt_file(file_path, decrypted_file_path, aes_key)
+            return {'message': 'File đã được giải mã', 'decrypted_file_path': decrypted_file_path}, 200
         except Exception as e:
             return {'error': str(e)}, 500
 

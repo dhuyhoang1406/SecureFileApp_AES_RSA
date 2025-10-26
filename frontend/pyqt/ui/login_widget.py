@@ -123,7 +123,8 @@ class LoginWidget(QWidget):
         try:
             result, status_code = self.api_service.register(email, password)
             
-            if status_code == 201:
+            # Backend may return 200 or 201 — treat both as success when error==0
+            if status_code in (200, 201) and result.get('error', 0) == 0:
                 show_message(self, "Thành công", "Đăng ký thành công! Vui lòng đăng nhập.")
                 self.password_input.clear()
             else:

@@ -2,7 +2,8 @@
 API_BASE_URL = "http://localhost:5000/api"
 
 # Demo Mode - Bật để test UI mà không cần backend
-DEMO_MODE = True  # Set False khi có backend thật
+# Set to False to use the real backend
+DEMO_MODE = False
 
 # Cấu hình UI
 WINDOW_TITLE = "SecureFile App - AES + RSA Encryption"

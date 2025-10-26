@@ -1,9 +1,17 @@
+
 from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
                              QPushButton, QLabel, QFileDialog, QProgressBar,
-                             QTextEdit, QFrame, QGroupBox)
-from PyQt5.QtCore import Qt, QTimer
+                             QTextEdit, QGroupBox)
+from PyQt5.QtCore import Qt
 from utils.config import BUTTON_STYLE, DANGER_BUTTON_STYLE
-from utils.helpers import show_message, get_file_info, format_file_size
+from utils.helpers import CryptoUtils, show_message, get_file_info, format_file_size
+import os
+import shutil
+import requests
+import base64
+import tempfile
+import time
+
 
 class FileOperationWidget(QWidget):
     def __init__(self, api_service):
@@ -53,12 +61,12 @@ class FileOperationWidget(QWidget):
         operation_section = QGroupBox("Thao tác")
         operation_layout = QGridLayout()
         
-        self.encrypt_btn = QPushButton("🔒 Mã hóa File")
+        self.encrypt_btn = QPushButton("Mã hóa File")
         self.encrypt_btn.setStyleSheet(BUTTON_STYLE)
         self.encrypt_btn.clicked.connect(self.encrypt_file)
         self.encrypt_btn.setEnabled(False)
         
-        self.decrypt_btn = QPushButton("🔓 Giải mã File")
+        self.decrypt_btn = QPushButton("Giải mã File")
         self.decrypt_btn.setStyleSheet(BUTTON_STYLE)
         self.decrypt_btn.clicked.connect(self.decrypt_file)
         self.decrypt_btn.setEnabled(False)
@@ -105,20 +113,37 @@ class FileOperationWidget(QWidget):
         
         # Add initial log
         self.add_log("Ứng dụng khởi động thành công")
-    
+
+    def add_log(self, message):
+        from datetime import datetime
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        self.log_text.append(f"[{timestamp}] {message}")
+
+    def clear_log(self):
+        self.log_text.clear()
+        self.add_log("Đã xóa nhật ký")
+
+    def start_operation(self, status_text="Đang xử lý..."):
+        self.progress_bar.setVisible(True)
+        self.progress_bar.setRange(0, 0)  # Vô hạn
+        self.status_label.setText(status_text)
+        self.encrypt_btn.setEnabled(False)
+        self.decrypt_btn.setEnabled(False)
+
+    def finish_operation(self):
+        self.progress_bar.setVisible(False)
+        self.status_label.setText("Sẵn sàng")
+        if self.selected_file:
+            self.encrypt_btn.setEnabled(True)
+            self.decrypt_btn.setEnabled(True)
+
     def select_file(self):
-        """Chọn file để xử lý"""
         file_path, _ = QFileDialog.getOpenFileName(
-            self,
-            "Chọn file để mã hóa/giải mã",
-            "",
-            "All Files (*.*)"
+            self, "Chọn file để mã hóa/giải mã", "", "All Files (*.*)"
         )
-        
         if file_path:
             self.selected_file = file_path
             file_info = get_file_info(file_path)
-            
             if file_info:
                 info_text = f"""
                 <b>Tên file:</b> {file_info['name']}<br>
@@ -130,118 +155,149 @@ class FileOperationWidget(QWidget):
                 self.clear_file_btn.setEnabled(True)
                 self.encrypt_btn.setEnabled(True)
                 self.decrypt_btn.setEnabled(True)
-                
                 self.add_log(f"Đã chọn file: {file_info['name']}")
             else:
                 show_message(self, "Lỗi", "Không thể đọc thông tin file", "error")
-    
+
     def clear_file(self):
-        """Xóa file đã chọn"""
         self.selected_file = None
         self.file_info_label.setText("Chưa chọn file nào")
         self.clear_file_btn.setEnabled(False)
         self.encrypt_btn.setEnabled(False)
         self.decrypt_btn.setEnabled(False)
         self.add_log("Đã xóa file đã chọn")
-    
+
     def encrypt_file(self):
-        """Mã hóa file"""
         if not self.selected_file:
-            show_message(self, "Lỗi", "Vui lòng chọn file trước", "error")
-            return
-        
-        self.start_operation("Đang mã hóa file...")
-        
+            return show_message(self, "Lỗi", "Chọn file trước", "error")
+
+        self.start_operation("Đang mã hóa...")
+
         try:
-            result, status_code = self.api_service.encrypt_file(self.selected_file)
-            
-            if status_code == 200:
-                self.add_log("✅ Mã hóa file thành công")
-                show_message(self, "Thành công", "File đã được mã hóa thành công!")
-                
-                # Có thể lưu file đã mã hóa
-                if 'encrypted_file_path' in result:
-                    save_path, _ = QFileDialog.getSaveFileName(
-                        self,
-                        "Lưu file đã mã hóa",
-                        f"{self.selected_file}.encrypted",
-                        "Encrypted Files (*.encrypted)"
-                    )
-                    if save_path:
-                        self.add_log(f"File đã mã hóa được lưu tại: {save_path}")
-            else:
-                error_msg = result.get('message', 'Mã hóa thất bại')
-                self.add_log(f"❌ Lỗi mã hóa: {error_msg}")
-                show_message(self, "Lỗi", error_msg, "error")
-                
+            # 1. Lấy public key
+            keys, status = self.api_service.get_user_keys()
+            if status != 200 or keys.get('error') != 0:
+                raise ValueError("Không lấy được public key")
+            public_key = keys['data']['publicKey']
+
+            # 2. Tạo AES key + mã hóa file -> write to a temp file to avoid locking original dir
+            aes_key_b64 = CryptoUtils.generate_aes_key()
+            fd, enc_path = tempfile.mkstemp(suffix='.enc')
+            os.close(fd)
+            try:
+                CryptoUtils.encrypt_file(self.selected_file, enc_path, aes_key_b64)
+            except Exception:
+                # If encryption failed, ensure temp file removed and re-raise
+                if os.path.exists(enc_path):
+                    try:
+                        os.remove(enc_path)
+                    except Exception:
+                        pass
+                raise
+
+            # 3. Mã hóa AES key bằng RSA
+            encrypted_aes_key_b64 = CryptoUtils.wrap_aes_key_with_rsa(aes_key_b64, public_key)
+
+            # 4. Gửi metadata lên /file/upload
+            filename = os.path.basename(self.selected_file)
+            payload = {
+                'filename': filename,
+                'filePath': enc_path,  # include encrypted file path so backend can record it
+                'aesKey': aes_key_b64  # backend dùng aesKey
+            }
+            response = requests.post(
+                f'{self.api_service.base_url}/file/upload',
+                json=payload,
+                headers=self.api_service.get_headers()
+            )
+            result, status_code = response.json(), response.status_code
+            if status_code not in (200, 201):
+                raise ValueError(result.get('message', 'Upload metadata thất bại'))
+
+            # 5. Lưu file + key local
+            save_dir = QFileDialog.getExistingDirectory(self, "Chọn thư mục lưu")
+            if not save_dir:
+                raise ValueError("Phải chọn nơi lưu")
+
+            final_enc = os.path.join(save_dir, filename + ".enc")
+            final_key = final_enc + ".key"
+
+            # Try to copy the temp encrypted file to final location with retries to avoid
+            # transient Windows file locks (WinError 32). If copying fails permanently,
+            # raise and cleanup temp file.
+            copy_attempts = 5
+            for attempt in range(1, copy_attempts + 1):
+                try:
+                    shutil.copy2(enc_path, final_enc)
+                    break
+                except PermissionError as e:
+                    # WinError 32 -> file locked, wait and retry
+                    if attempt == copy_attempts:
+                        raise
+                    time.sleep(0.2 * attempt)
+
+            with open(final_key, 'w', encoding='utf-8') as f:
+                f.write(encrypted_aes_key_b64)
+
+            try:
+                os.remove(enc_path)
+            except Exception:
+                # If removal fails, don't block success — just log and continue
+                self.add_log(f"Không xóa được file tạm: {enc_path}")
+
+            # 6. Thông báo
+            msg = f"""
+            <b>Mã hóa thành công!</b><br><br>
+            <b>File:</b> <code>{final_enc}</code><br>
+            <b>Key:</b> <code>{final_key}</code><br><br>
+            <i>Lưu cả 2 file này an toàn!</i>
+            """
+            show_message(self, "Thành công", msg, "info")
+            self.add_log("Mã hóa & lưu local thành công")
+
         except Exception as e:
-            self.add_log(f"❌ Lỗi: {str(e)}")
-            show_message(self, "Lỗi", f"Lỗi kết nối: {str(e)}", "error")
-        
+            self.add_log(f"Lỗi: {e}")
+            show_message(self, "Lỗi", str(e), "error")
         finally:
             self.finish_operation()
-    
+
     def decrypt_file(self):
-        """Giải mã file"""
-        if not self.selected_file:
-            show_message(self, "Lỗi", "Vui lòng chọn file trước", "error")
+        if not self.selected_file or not self.selected_file.endswith('.enc'):
+            return show_message(self, "Lỗi", "Chọn file .enc", "error")
+
+        key_path, _ = QFileDialog.getOpenFileName(self, "Chọn file key", "", "Key File (*.key)")
+        if not key_path:
             return
-        
-        self.start_operation("Đang giải mã file...")
-        
+
+        self.start_operation("Đang giải mã...")
+
         try:
-            result, status_code = self.api_service.decrypt_file(self.selected_file)
-            
-            if status_code == 200:
-                self.add_log("✅ Giải mã file thành công")
-                show_message(self, "Thành công", "File đã được giải mã thành công!")
-                
-                # Có thể lưu file đã giải mã
-                if 'decrypted_file_path' in result:
-                    save_path, _ = QFileDialog.getSaveFileName(
-                        self,
-                        "Lưu file đã giải mã",
-                        f"{self.selected_file}.decrypted",
-                        "All Files (*.*)"
-                    )
-                    if save_path:
-                        self.add_log(f"File đã giải mã được lưu tại: {save_path}")
-            else:
-                error_msg = result.get('message', 'Giải mã thất bại')
-                self.add_log(f"❌ Lỗi giải mã: {error_msg}")
-                show_message(self, "Lỗi", error_msg, "error")
-                
+            # 1. Lấy private key
+            keys, status = self.api_service.get_user_keys()
+            if status != 200 or keys.get('error') != 0:
+                raise ValueError("Không lấy được private key")
+            private_key = keys['data']['privateKey']
+
+            # 2. Đọc encrypted key từ file .key
+            encrypted_aes_key_b64 = open(key_path, 'r', encoding='utf-8').read().strip()
+
+            # 3. Giải mã AES key bằng RSA
+            aes_key_b64 = CryptoUtils.unwrap_aes_key_with_rsa(encrypted_aes_key_b64, private_key)
+
+            # 4. Giải mã file
+            save_path, _ = QFileDialog.getSaveFileName(
+                self, "Lưu file gốc", os.path.basename(self.selected_file).replace('.enc', ''), "All Files (*)"
+            )
+            if not save_path:
+                return
+
+            CryptoUtils.decrypt_file(self.selected_file, save_path, aes_key_b64)
+
+            show_message(self, "Thành công", f"Giải mã thành công!\nLưu tại: {save_path}")
+            self.add_log("Giải mã thành công")
+
         except Exception as e:
-            self.add_log(f"❌ Lỗi: {str(e)}")
-            show_message(self, "Lỗi", f"Lỗi kết nối: {str(e)}", "error")
-        
+            self.add_log(f"Lỗi: {e}")
+            show_message(self, "Lỗi", str(e), "error")
         finally:
             self.finish_operation()
-    
-    def start_operation(self, message):
-        """Bắt đầu thao tác - hiển thị progress"""
-        self.status_label.setText(message)
-        self.progress_bar.setVisible(True)
-        self.progress_bar.setRange(0, 0)  # Indeterminate progress
-        self.encrypt_btn.setEnabled(False)
-        self.decrypt_btn.setEnabled(False)
-        self.select_file_btn.setEnabled(False)
-    
-    def finish_operation(self):
-        """Kết thúc thao tác - ẩn progress"""
-        self.status_label.setText("Sẵn sàng")
-        self.progress_bar.setVisible(False)
-        self.encrypt_btn.setEnabled(True)
-        self.decrypt_btn.setEnabled(True)
-        self.select_file_btn.setEnabled(True)
-    
-    def add_log(self, message):
-        """Thêm dòng log"""
-        from datetime import datetime
-        timestamp = datetime.now().strftime("%H:%M:%S")
-        self.log_text.append(f"[{timestamp}] {message}")
-    
-    def clear_log(self):
-        """Xóa nhật ký"""
-        self.log_text.clear()
-        self.add_log("Nhật ký đã được xóa")

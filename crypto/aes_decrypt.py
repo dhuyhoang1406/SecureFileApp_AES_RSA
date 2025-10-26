@@ -1,19 +1,14 @@
-# aes_decrypt.py
-# Decrypt pipeline: RSA unwrap AES key (Base64) -> AES-ECB decrypt (PKCS#7)
-
+"""
+AES decrypt script. Provides function to decrypt using a plain AES key.
+This script can be invoked as:
+  python aes_decrypt.py <enc_file> <out_file> <aes_key_base64|hex|raw>
+"""
+import sys
 import base64
-from typing import List
+# Use package import so module resolution works when running from frontend/pyqt
+from crypto.aes_encrypt import key_expansion, add_round_key
 
-# Dùng lại các hàm từ encrypt side (ECB + PKCS#7)  :contentReference[oaicite:2]{index=2}
-from aes_encrypt import key_expansion, add_round_key
 
-# ===== RSA unwrap theo format rsa_wrap_key.py (file key Base64, private key "n,d")  :contentReference[oaicite:3]{index=3}
-def rsa_decrypt(cipher: bytes, n: int, d: int) -> bytes:
-    c = int.from_bytes(cipher, "big")
-    m = pow(c, d, n)
-    return m.to_bytes((m.bit_length() + 7) // 8, "big")
-
-# ===== Inverse AES primitives (ECB decrypt) =====
 INV_S_BOX = [
     0x52,0x09,0x6a,0xd5,0x30,0x36,0xa5,0x38,0xbf,0x40,0xa3,0x9e,0x81,0xf3,0xd7,0xfb,
     0x7c,0xe3,0x39,0x82,0x9b,0x2f,0xff,0x87,0x34,0x8e,0x43,0x44,0xc4,0xde,0xe9,0xcb,
@@ -33,8 +28,10 @@ INV_S_BOX = [
     0x17,0x2b,0x04,0x7e,0xba,0x77,0xd6,0x26,0xe1,0x69,0x14,0x63,0x55,0x21,0x0c,0x7d
 ]
 
+
 def inv_sub_bytes(state: list[int]) -> list[int]:
     return [INV_S_BOX[b] for b in state]
+
 
 def inv_shift_rows(state: list[int]) -> list[int]:
     return [
@@ -44,8 +41,10 @@ def inv_shift_rows(state: list[int]) -> list[int]:
         state[12],state[9],  state[6],  state[3]
     ]
 
+
 def xtime(a: int) -> int:
     return ((a << 1) & 0xFF) ^ (0x1B if (a & 0x80) else 0x00)
+
 
 def gf_mul(a: int, b: int) -> int:
     res = 0
@@ -55,6 +54,7 @@ def gf_mul(a: int, b: int) -> int:
         a = xtime(a)
         b >>= 1
     return res & 0xFF
+
 
 def inv_mix_columns(state: list[int]) -> list[int]:
     out = []
@@ -67,6 +67,7 @@ def inv_mix_columns(state: list[int]) -> list[int]:
             (gf_mul(c0,11) ^ gf_mul(c1,13) ^ gf_mul(c2, 9) ^ gf_mul(c3,14)) & 0xFF
         ]
     return out
+
 
 def aes_decrypt_block(block: bytes, key_schedule: list[list[int]], Nr: int) -> bytes:
     state = list(block)
@@ -85,6 +86,7 @@ def aes_decrypt_block(block: bytes, key_schedule: list[list[int]], Nr: int) -> b
     state = add_round_key(state, sum(key_schedule[0:4], []))
     return bytes(state)
 
+
 def pkcs7_unpad(data: bytes) -> bytes:
     if not data or len(data) % 16 != 0:
         raise ValueError("Ciphertext size invalid")
@@ -95,40 +97,7 @@ def pkcs7_unpad(data: bytes) -> bytes:
         raise ValueError("Bad PKCS#7 padding bytes")
     return data[:-pad]
 
-# ===== API 1: Decrypt với RSA key file (khớp rsa_wrap_key.py) =====
-def decrypt_file_with_rsa_key(enc_path: str, out_path: str, enc_key_path: str, rsa_private_txt: str) -> None:
-    """
-    enc_path: file dữ liệu .enc (AES-ECB + PKCS7)
-    out_path: file xuất plaintext
-    enc_key_path: file chứa AES key đã ENCRYPT bằng RSA (Base64)
-    rsa_private_txt: file text "n,d" (giống rsa_wrap_key.py)
-    """
-    # 1) RSA unwrap khóa AES (Base64 -> bytes -> RSA decrypt -> 16B)
-    enc_key_b64 = open(enc_key_path, "rb").read()
-    enc_key = base64.b64decode(enc_key_b64)
-    n, d = map(int, open(rsa_private_txt, "r").read().split(","))
-    aes_key = rsa_decrypt(enc_key, n, d).rjust(16, b"\x00")  # AES-128 theo rsa_wrap_key.py
 
-    # 2) Key schedule từ encrypt side  :contentReference[oaicite:4]{index=4}
-    key_schedule, Nr = key_expansion(aes_key)  # với 16B -> Nr = 10
-
-    # 3) Đọc và giải mã theo block
-    ct = open(enc_path, "rb").read()
-    if len(ct) % 16 != 0:
-        raise ValueError("Ciphertext length must be multiple of 16 for ECB")
-    pt_chunks = []
-    for i in range(0, len(ct), 16):
-        pt_chunks.append(aes_decrypt_block(ct[i:i+16], key_schedule, Nr))
-    pt = b"".join(pt_chunks)
-
-    # 4) Gỡ PKCS#7  :contentReference[oaicite:5]{index=5}
-    pt = pkcs7_unpad(pt)
-
-    # 5) Ghi file
-    with open(out_path, "wb") as f:
-        f.write(pt)
-
-# ===== API 2: Decrypt khi đã có AES key plaintext (không cần RSA) =====
 def decrypt_file_with_plain_key(enc_path: str, out_path: str, aes_key: bytes) -> None:
     key_schedule, Nr = key_expansion(aes_key)
     ct = open(enc_path, "rb").read()
@@ -141,22 +110,52 @@ def decrypt_file_with_plain_key(enc_path: str, out_path: str, aes_key: bytes) ->
     with open(out_path, "wb") as f:
         f.write(pt)
 
-# Demo nhanh (tuỳ chọn)
-if __name__ == "__main__":
-    # Test decrypt với RSA wrapped key
-    decrypt_file_with_rsa_key(
-        enc_path="test.enc",
-        out_path="test.dec.txt",
-        enc_key_path="aes.key.enc",
-        rsa_private_txt="rsa_prv.txt",
-    )
-    print("Decrypt xong: test.dec.txt")
+
+def _parse_key_arg(key_arg: str) -> bytes:
+    # Try base64
+    try:
+        k = base64.b64decode(key_arg)
+        if len(k) in (16, 24, 32):
+            return k
+    except Exception:
+        pass
+    # Try hex
+    try:
+        k = bytes.fromhex(key_arg)
+        if len(k) in (16, 24, 32):
+            return k
+    except Exception:
+        pass
+    # Fallback: raw string
+    k = key_arg.encode()
+    if len(k) in (16, 24, 32):
+        return k
+    raise ValueError("Invalid AES key: provide base64, hex, or raw key with correct length")
+def decrypt_file_data(ciphertext: bytes, aes_key_b64: str) -> bytes:
+    """
+    Giải mã dữ liệu bằng AES (ECB + PKCS7)
+    """
+    key = base64.b64decode(aes_key_b64)
+    key_schedule, Nr = key_expansion(key)
     
-    # Test 2: Decrypt với RSA wrapped key
-    # decrypt_file_with_rsa_key(
-    #     enc_path="test.enc",
-    #     out_path="test.dec2.txt",
-    #     enc_key_path="aes.key.enc",
-    #     rsa_private_txt="rsa_prv.txt",
-    # )
-    # print("✅ Decrypt xong: test.dec2.txt")
+    plaintext = b""
+    for i in range(0, len(ciphertext), 16):
+        block = ciphertext[i:i+16]
+        decrypted = aes_decrypt_block(block, key_schedule, Nr)
+        plaintext += bytes(decrypted)
+    
+    return pkcs7_unpad(plaintext)
+
+def main():
+    if len(sys.argv) < 4:
+        print("Usage: aes_decrypt.py <enc_file> <out_file> <aes_key_base64|hex|raw>")
+        sys.exit(2)
+    enc_path = sys.argv[1]
+    out_path = sys.argv[2]
+    key_arg = sys.argv[3]
+    key = _parse_key_arg(key_arg)
+    decrypt_file_with_plain_key(enc_path, out_path, key)
+
+
+if __name__ == "__main__":
+    main()

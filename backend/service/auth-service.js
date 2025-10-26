@@ -17,11 +17,21 @@ export const register = async (email, password) => {
 
 export const login = async (email, password) => {
   const user = await User.findOne({ where: { email } });
-  if (!user) return { error: 1, message: "Email hoặc mật khẩu không chính xác" };
+  if (!user)
+    return { error: 1, message: "Email hoặc mật khẩu không chính xác" };
 
   const match = bcrypt.compareSync(password, user.password);
   if (!match)
     return { error: 1, message: "Email hoặc mật khẩu không chính xác" };
 
   return { error: 0, message: "Đăng nhập thành công", id: user.id };
+};
+
+const blacklist = new Set();
+export const invalidateToken = async (token) => {
+  blacklist.add(token);
+};
+
+export const isTokenBlacklisted = (token) => {
+  return blacklist.has(token);
 };
