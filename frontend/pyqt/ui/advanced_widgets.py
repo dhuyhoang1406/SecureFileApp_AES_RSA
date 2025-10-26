@@ -2,6 +2,7 @@ from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout,
                              QPushButton, QLabel, QListWidget, QGroupBox,
                              QTextEdit, QMessageBox)
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
+import os
 from utils.config import BUTTON_STYLE
 from utils.helpers import show_message
 
@@ -81,30 +82,39 @@ class KeyManagementWidget(QWidget):
             show_message(self, "Lỗi", f"Lỗi kết nối: {str(e)}", "error")
     
     def generate_new_keys(self):
-        """Tạo RSA keys mới (placeholder - cần crypto module)"""
-        # Tạm thời dùng placeholder keys
-        import secrets
-        import base64
-        
-        # Tạo fake keys để demo
-        public_key = base64.b64encode(secrets.token_bytes(256)).decode()
-        private_key = base64.b64encode(secrets.token_bytes(512)).decode()
-        
-        self.public_key_text.setText(public_key)
-        self.private_key_text.setText(private_key)
-        
-        # Lưu lên server
+        """Tạo RSA keys mới bằng script `crypto/cryptoRSA_test/rsa_wrap_key.py` và lưu lên server"""
+        import subprocess, sys
         try:
+            # Determine repo root and script path
+            repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..'))
+            script_path = os.path.join(repo_root, 'crypto', 'cryptoRSA_test', 'rsa_wrap_key.py')
+
+            # Run keygen in the script's folder so it writes rsa_pub.txt / rsa_prv.txt there
+            subprocess.run([sys.executable, script_path], check=True, cwd=os.path.dirname(script_path))
+
+            pub_file = os.path.join(os.path.dirname(script_path), 'rsa_pub.txt')
+            prv_file = os.path.join(os.path.dirname(script_path), 'rsa_prv.txt')
+
+            with open(pub_file, 'r', encoding='utf-8') as f:
+                public_key = f.read().strip()
+            with open(prv_file, 'r', encoding='utf-8') as f:
+                private_key = f.read().strip()
+
+            self.public_key_text.setText(public_key)
+            self.private_key_text.setText(private_key)
+
+            # Save to server
             result, status_code = self.api_service.save_user_keys(public_key, private_key)
-            
             if status_code == 200 and result.get('error') == 0:
                 show_message(self, "Thành công", "Đã tạo và lưu keys mới!")
             else:
                 error_msg = result.get('message', 'Không thể lưu keys')
                 show_message(self, "Lỗi", error_msg, "error")
-                
+
+        except subprocess.CalledProcessError as e:
+            show_message(self, "Lỗi", f"Tạo RSA keys thất bại: {e}", "error")
         except Exception as e:
-            show_message(self, "Lỗi", f"Lỗi kết nối: {str(e)}", "error")
+            show_message(self, "Lỗi", f"Lỗi: {str(e)}", "error")
 
 class FileListWidget(QWidget):
     def __init__(self, api_service):

@@ -104,7 +104,18 @@ def open_key(enc_path, prv_file, out_file):
     open(out_file, "wb").write(dec)
     print("Decrypted AES key saved to", out_file)
 
-# ===== 6. DEMO RUN =====
+def seal_aes_key(aes_key_bytes: bytes, public_key_str: str) -> bytes:
+    n, e = map(int, public_key_str.split(','))
+    m = int.from_bytes(aes_key_bytes, 'big')
+    c = pow(m, e, n)
+    return c.to_bytes((c.bit_length() + 7) // 8, 'big')
+
+def open_aes_key(encrypted_key_bytes: bytes, private_key_str: str) -> bytes:
+    n, d = map(int, private_key_str.split(','))
+    c = int.from_bytes(encrypted_key_bytes, 'big')
+    m = pow(c, d, n)
+    key = m.to_bytes(16, 'big').lstrip(b'\x00')
+    return key.rjust(16, b'\x00')  # đảm bảo 16 bytes
 
 if __name__ == "__main__":
     print("Generating RSA keypair...", flush=True)

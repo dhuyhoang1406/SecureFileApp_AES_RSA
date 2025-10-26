@@ -115,6 +115,13 @@ class MainWindow(QMainWindow):
         )
         
         if reply == QMessageBox.Yes:
+            # Call backend logout to invalidate token, then reset local state
+            try:
+                result, status_code = self.api_service.logout()
+                # We ignore detailed errors but log if needed
+            except Exception:
+                pass
+
             # Reset token
             self.current_user_token = None
             self.api_service.set_token(None)

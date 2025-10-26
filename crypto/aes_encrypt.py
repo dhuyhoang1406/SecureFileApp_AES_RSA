@@ -1,9 +1,14 @@
-# AES implementation in Python without external libraries
-# AES-128 ECB mode
+"""
+AES implementation in Python without external libraries
+Supports AES-128/192/256 in ECB mode with PKCS#7 padding.
+This script accepts CLI arguments: input_file output_file aes_key
+aes_key may be base64, hex, or raw string (must be 16/24/32 bytes after decode).
+"""
+import sys
+import base64
 
 # S-box
 S_BOX = [
-#     0     1     2     3     4     5     6     7     8     9     A     B     C     D     E     F
     0x63, 0x7c, 0x77, 0x7b, 0xf2, 0x6b, 0x6f, 0xc5, 0x30, 0x01, 0x67, 0x2b, 0xfe, 0xd7, 0xab, 0x76,
     0xca, 0x82, 0xc9, 0x7d, 0xfa, 0x59, 0x47, 0xf0, 0xad, 0xd4, 0xa2, 0xaf, 0x9c, 0xa4, 0x72, 0xc0,
     0xb7, 0xfd, 0x93, 0x26, 0x36, 0x3f, 0xf7, 0xcc, 0x34, 0xa5, 0xe5, 0xf1, 0x71, 0xd8, 0x31, 0x15,
@@ -29,9 +34,10 @@ R_CON = [
     0x1B, 0x36
 ]
 
-# ====== Các bước cơ bản ======
+
 def sub_bytes(state):
     return [S_BOX[b] for b in state]
+
 
 def shift_rows(state):
     return [
@@ -41,13 +47,15 @@ def shift_rows(state):
         state[12], state[1], state[6], state[11]
     ]
 
+
 def xtime(a):
     return ((a << 1) & 0xFF) ^ (0x1B if (a & 0x80) else 0x00)
+
 
 def mix_columns(state):
     result = []
     for i in range(4):
-        col = state[i*4:(i+1)*4]
+        col = state[i * 4:(i + 1) * 4]
         result += [
             xtime(col[0]) ^ (xtime(col[1]) ^ col[1]) ^ col[2] ^ col[3],
             col[0] ^ xtime(col[1]) ^ (xtime(col[2]) ^ col[2]) ^ col[3],
@@ -56,15 +64,15 @@ def mix_columns(state):
         ]
     return result
 
+
 def add_round_key(state, round_key):
     return [s ^ k for s, k in zip(state, round_key)]
 
-# ====== Key Expansion ======
+
 def key_expansion(key):
     key_symbols = [b for b in key]
     key_len = len(key_symbols)
-    
-    # Determine AES type
+
     if key_len == 16:
         Nk = 4
         Nr = 10
@@ -76,22 +84,21 @@ def key_expansion(key):
         Nr = 14
     else:
         raise ValueError("Key must be 16, 24, or 32 bytes")
-    
+
     key_schedule = key_symbols.copy()
     Nb = 4
-    for i in range(Nk, Nb*(Nr+1)):
-        temp = key_schedule[(i-1)*4:i*4]
+    for i in range(Nk, Nb * (Nr + 1)):
+        temp = key_schedule[(i - 1) * 4:i * 4]
         if i % Nk == 0:
-            temp = [S_BOX[temp[1]] ^ R_CON[i//Nk - 1], S_BOX[temp[2]], S_BOX[temp[3]], S_BOX[temp[0]]]
+            temp = [S_BOX[temp[1]] ^ R_CON[i // Nk - 1], S_BOX[temp[2]], S_BOX[temp[3]], S_BOX[temp[0]]]
         elif Nk > 6 and i % Nk == 4:
             temp = [S_BOX[b] for b in temp]
         for j in range(4):
-            temp[j] ^= key_schedule[(i-Nk)*4 + j]
+            temp[j] ^= key_schedule[(i - Nk) * 4 + j]
         key_schedule += temp
-    return [key_schedule[4*i:4*(i+1)] for i in range(Nb*(Nr+1))], Nr
+    return [key_schedule[4 * i:4 * (i + 1)] for i in range(Nb * (Nr + 1))], Nr
 
 
-# ====== AES Encrypt Block ======
 def aes_encrypt_block(block, key_schedule, Nr):
     state = [b for b in block]
     state = add_round_key(state, sum(key_schedule[0:4], []))
@@ -99,14 +106,13 @@ def aes_encrypt_block(block, key_schedule, Nr):
         state = sub_bytes(state)
         state = shift_rows(state)
         state = mix_columns(state)
-        state = add_round_key(state, sum(key_schedule[rnd*4:(rnd+1)*4], []))
+        state = add_round_key(state, sum(key_schedule[rnd * 4:(rnd + 1) * 4], []))
     state = sub_bytes(state)
     state = shift_rows(state)
-    state = add_round_key(state, sum(key_schedule[Nr*4:(Nr+1)*4], []))
+    state = add_round_key(state, sum(key_schedule[Nr * 4:(Nr + 1) * 4], []))
     return state
 
 
-# ====== Encrypt File ======
 def encrypt_file(input_file, output_file, key):
     key_schedule, Nr = key_expansion(key)
     with open(input_file, "rb") as f:
@@ -116,22 +122,61 @@ def encrypt_file(input_file, output_file, key):
     plaintext += bytes([pad_len]) * pad_len
     ciphertext = b""
     for i in range(0, len(plaintext), 16):
-        block = plaintext[i:i+16]
+        block = plaintext[i:i + 16]
         encrypted_block = aes_encrypt_block(block, key_schedule, Nr)
         ciphertext += bytes(encrypted_block)
     with open(output_file, "wb") as f:
         f.write(ciphertext)
 
 
-# ==== Demo ====
+def _parse_key_arg(key_arg: str) -> bytes:
+    # Try base64
+    try:
+        k = base64.b64decode(key_arg)
+        if len(k) in (16, 24, 32):
+            return k
+    except Exception:
+        pass
+    # Try hex
+    try:
+        k = bytes.fromhex(key_arg)
+        if len(k) in (16, 24, 32):
+            return k
+    except Exception:
+        pass
+    # Fallback: raw string
+    k = key_arg.encode()
+    if len(k) in (16, 24, 32):
+        return k
+    raise ValueError("Invalid AES key: provide base64, hex, or raw key with correct length")
+def encrypt_file_data(data: bytes, aes_key_b64: str) -> bytes:
+    """
+    Mã hóa dữ liệu bằng AES (ECB + PKCS7)
+    """
+    key = base64.b64decode(aes_key_b64)
+    key_schedule, Nr = key_expansion(key)
+    
+    # PKCS7 padding
+    pad_len = 16 - (len(data) % 16)
+    data += bytes([pad_len]) * pad_len
+    
+    ciphertext = b""
+    for i in range(0, len(data), 16):
+        block = data[i:i+16]
+        encrypted = aes_encrypt_block(block, key_schedule, Nr)
+        ciphertext += bytes(encrypted)
+    return ciphertext
 
-with open("test.txt", "w") as f:
-    f.write("Hello AES encryption!")
+def main():
+    if len(sys.argv) < 4:
+        print("Usage: aes_encrypt.py <input_file> <output_file> <aes_key_base64|hex|raw>")
+        sys.exit(2)
+    input_file = sys.argv[1]
+    output_file = sys.argv[2]
+    key_arg = sys.argv[3]
+    key = _parse_key_arg(key_arg)
+    encrypt_file(input_file, output_file, key)
 
-# You can use 16, 24, or 32 bytes key
-key = b"thisisakey123456"        # AES-128
-# key = b"thisisakey12345612345678"  # AES-192
-# key = b"thisisakey1234561234567812345678"  # AES-256
 
-encrypt_file("test.txt", "test.enc", key)
-print("File encrypted!")
+if __name__ == "__main__":
+    main()
