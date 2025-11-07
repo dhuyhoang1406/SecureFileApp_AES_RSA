@@ -111,11 +111,38 @@ def seal_aes_key(aes_key_bytes: bytes, public_key_str: str) -> bytes:
     return c.to_bytes((c.bit_length() + 7) // 8, 'big')
 
 def open_aes_key(encrypted_key_bytes: bytes, private_key_str: str) -> bytes:
+    """
+    Unwrap AES key từ RSA encrypted bytes
+    Returns: 16 bytes AES key
+    """
     n, d = map(int, private_key_str.split(','))
     c = int.from_bytes(encrypted_key_bytes, 'big')
     m = pow(c, d, n)
-    key = m.to_bytes(16, 'big').lstrip(b'\x00')
-    return key.rjust(16, b'\x00')  # đảm bảo 16 bytes
+    
+    # Tính số bytes cần thiết dựa trên bit_length của m
+    num_bytes = (m.bit_length() + 7) // 8
+    
+    # Nếu m = 0, trả về 16 bytes zero
+    if m == 0:
+        return b'\x00' * 16
+    
+    key = m.to_bytes(num_bytes, 'big')
+    
+    # Nếu key đã đúng 16 bytes hoặc ít hơn, pad về 16 bytes
+    if len(key) <= 16:
+        return key.rjust(16, b'\x00')
+    
+    # Nếu key dài hơn 16 bytes, có thể có padding zeros phía trước
+    # Chỉ strip tối đa để còn lại 16 bytes
+    while len(key) > 16 and key[0] == 0:
+        key = key[1:]
+    
+    # Nếu vẫn dài hơn 16 bytes (không nên xảy ra với AES-128)
+    if len(key) > 16:
+        # Lấy 16 bytes cuối
+        key = key[-16:]
+    
+    return key.rjust(16, b'\x00')
 
 if __name__ == "__main__":
     print("Generating RSA keypair...", flush=True)

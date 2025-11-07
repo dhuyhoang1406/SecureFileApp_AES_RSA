@@ -1,15 +1,21 @@
 import bcrypt from "bcrypt";
 import { User } from "../models/index.js";
+import { generateRSAKeypair } from "../utils/crypto-helper.js";
 const saltRounds = 10;
 
 export const register = async (email, password) => {
   const existing = await User.findOne({ where: { email } });
   if (existing) return { error: 1, message: "Email đã tồn tại" };
 
+  // Tự động tạo RSA keypair cho user mới (512-bit cho demo, nên dùng 2048+ production)
+  const { publicKey, privateKey } = generateRSAKeypair(512);
+
   await User.create({
     email,
     username: email.split("@")[0],
     password: bcrypt.hashSync(password, saltRounds),
+    publicKey, // Lưu public key "n,e"
+    privateKey, // Lưu private key "n,d" (sẽ được bảo vệ bởi password verification)
   });
 
   return { error: 0, message: "Đăng ký thành công" };

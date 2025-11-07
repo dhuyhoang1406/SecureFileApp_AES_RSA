@@ -1,6 +1,6 @@
 from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, 
                              QPushButton, QLabel, QListWidget, QGroupBox,
-                             QTextEdit, QMessageBox)
+                             QTextEdit, QMessageBox, QLineEdit, QInputDialog)
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
 import os
 from utils.config import BUTTON_STYLE
@@ -33,11 +33,11 @@ class KeyManagementWidget(QWidget):
         self.public_key_text.setPlaceholderText("Public key sẽ hiển thị ở đây...")
         
         # Private key
-        priv_label = QLabel("Private Key:")
+        priv_label = QLabel("Private Key (nhấn nút bên dưới để hiển thị - yêu cầu password):")
         self.private_key_text = QTextEdit()
         self.private_key_text.setMaximumHeight(100)
         self.private_key_text.setReadOnly(True)
-        self.private_key_text.setPlaceholderText("Private key sẽ hiển thị ở đây...")
+        self.private_key_text.setPlaceholderText("*** Private key được bảo vệ - nhấn 'Hiện Private Key' ***")
         
         key_layout.addWidget(pub_label)
         key_layout.addWidget(self.public_key_text)
@@ -50,30 +50,31 @@ class KeyManagementWidget(QWidget):
         # Action buttons
         button_layout = QHBoxLayout()
         
-        self.load_keys_btn = QPushButton("Tải Keys")
+        self.load_keys_btn = QPushButton("Tải Public Key")
         self.load_keys_btn.setStyleSheet(BUTTON_STYLE)
         self.load_keys_btn.clicked.connect(self.load_user_keys)
         
-        self.generate_keys_btn = QPushButton("Tạo Keys mới")
-        self.generate_keys_btn.setStyleSheet(BUTTON_STYLE)
-        self.generate_keys_btn.clicked.connect(self.generate_new_keys)
+        self.show_private_key_btn = QPushButton("Hiện Private Key")
+        self.show_private_key_btn.setStyleSheet(BUTTON_STYLE)
+        self.show_private_key_btn.clicked.connect(self.show_private_key)
         
         button_layout.addWidget(self.load_keys_btn)
-        button_layout.addWidget(self.generate_keys_btn)
+        button_layout.addWidget(self.show_private_key_btn)
         layout.addLayout(button_layout)
         
         self.setLayout(layout)
     
     def load_user_keys(self):
-        """Tải RSA keys từ server"""
+        """Tải PUBLIC KEY từ server (không cần password)"""
         try:
             result, status_code = self.api_service.get_user_keys()
             
             if status_code == 200 and result.get('error') == 0:
                 keys = result.get('data', {})
                 self.public_key_text.setText(keys.get('publicKey', ''))
-                self.private_key_text.setText(keys.get('privateKey', ''))
-                show_message(self, "Thành công", "Đã tải keys thành công!")
+                # KHÔNG hiển thị private key ở đây
+                self.private_key_text.setPlaceholderText("*** Nhấn 'Hiện Private Key' để xem (yêu cầu password) ***")
+                show_message(self, "Thành công", "Đã tải public key thành công!")
             else:
                 error_msg = result.get('message', 'Không thể tải keys')
                 show_message(self, "Lỗi", error_msg, "error")
@@ -81,40 +82,43 @@ class KeyManagementWidget(QWidget):
         except Exception as e:
             show_message(self, "Lỗi", f"Lỗi kết nối: {str(e)}", "error")
     
-    def generate_new_keys(self):
-        """Tạo RSA keys mới bằng script `crypto/cryptoRSA_test/rsa_wrap_key.py` và lưu lên server"""
-        import subprocess, sys
+    def show_private_key(self):
+        """Hiển thị PRIVATE KEY - YÊU CẦU XÁC NHẬN PASSWORD"""
+        # Yêu cầu nhập password
+        password, ok = QInputDialog.getText(
+            self, 
+            "Xác nhận mật khẩu", 
+            "Nhập mật khẩu của bạn để xem Private Key:",
+            QLineEdit.Password
+        )
+        
+        if not ok or not password:
+            return
+        
         try:
-            # Determine repo root and script path
-            repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..'))
-            script_path = os.path.join(repo_root, 'crypto', 'cryptoRSA_test', 'rsa_wrap_key.py')
-
-            # Run keygen in the script's folder so it writes rsa_pub.txt / rsa_prv.txt there
-            subprocess.run([sys.executable, script_path], check=True, cwd=os.path.dirname(script_path))
-
-            pub_file = os.path.join(os.path.dirname(script_path), 'rsa_pub.txt')
-            prv_file = os.path.join(os.path.dirname(script_path), 'rsa_prv.txt')
-
-            with open(pub_file, 'r', encoding='utf-8') as f:
-                public_key = f.read().strip()
-            with open(prv_file, 'r', encoding='utf-8') as f:
-                private_key = f.read().strip()
-
-            self.public_key_text.setText(public_key)
-            self.private_key_text.setText(private_key)
-
-            # Save to server
-            result, status_code = self.api_service.save_user_keys(public_key, private_key)
+            result, status_code = self.api_service.get_private_key(password)
+            
             if status_code == 200 and result.get('error') == 0:
-                show_message(self, "Thành công", "Đã tạo và lưu keys mới!")
+                private_key = result.get('data', {}).get('privateKey', '')
+                self.private_key_text.setText(private_key)
+                show_message(self, "Thành công", "Đã hiển thị private key!")
+            elif status_code == 401:
+                show_message(self, "Lỗi", "Mật khẩu không chính xác!", "error")
             else:
-                error_msg = result.get('message', 'Không thể lưu keys')
+                error_msg = result.get('message', 'Không thể lấy private key')
                 show_message(self, "Lỗi", error_msg, "error")
-
-        except subprocess.CalledProcessError as e:
-            show_message(self, "Lỗi", f"Tạo RSA keys thất bại: {e}", "error")
+                
         except Exception as e:
-            show_message(self, "Lỗi", f"Lỗi: {str(e)}", "error")
+            show_message(self, "Lỗi", f"Lỗi kết nối: {str(e)}", "error")
+    
+    def generate_new_keys(self):
+        """BỎ FUNCTION NÀY - Keys được tạo tự động khi register"""
+        show_message(
+            self, 
+            "Thông báo", 
+            "RSA keys được tạo tự động khi đăng ký.\nKhông cần tạo lại keys thủ công.",
+            "info"
+        )
 
 class FileListWidget(QWidget):
     def __init__(self, api_service):

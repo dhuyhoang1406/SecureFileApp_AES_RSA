@@ -1,4 +1,5 @@
 import { User } from "../models/index.js";
+import bcrypt from "bcrypt";
 
 // NOTE: Các endpoint user ở backend sẽ lấy user id từ middleware JWTAction
 // (req.data.id) hoặc từ header 'x-user-id' nếu có. Tránh dùng req.params.
@@ -50,11 +51,13 @@ export const getKey = async (req, res) => {
       idFromToken || idFromHeader || req.query.userId || req.body.userId;
 
     if (!userId) {
-      return res.status(400).json({ error: 1, message: "User ID is required." });
+      return res
+        .status(400)
+        .json({ error: 1, message: "User ID is required." });
     }
 
     const user = await User.findByPk(userId, {
-      attributes: ["publicKey", "privateKey"], // BỎ aesKey
+      attributes: ["publicKey"], // CHỈ TRẢ PUBLIC KEY
     });
 
     if (!user) {
@@ -65,13 +68,70 @@ export const getKey = async (req, res) => {
       error: 0,
       data: {
         publicKey: user.publicKey,
-        privateKey: user.privateKey,
-        // aesKey: user.aesKey, // BỎ DÒNG NÀY
+        // KHÔNG TRẢ privateKey ở đây - dùng endpoint riêng với password verification
       },
     });
   } catch (error) {
     console.error("getKey error:", error);
-    return res.status(500).json({ error: 1, message: "Internal server error." });
+    return res
+      .status(500)
+      .json({ error: 1, message: "Internal server error." });
+  }
+};
+
+/**
+ * Lấy private key - YÊU CẦU XÁC NHẬN MẬT KHẨU
+ * POST /api/user/get-private-key
+ * Body: { password: string }
+ */
+export const getPrivateKey = async (req, res) => {
+  try {
+    const idFromToken = req.data?.id;
+    const idFromHeader = req.headers["x-user-id"];
+    const userId = idFromToken || idFromHeader;
+
+    const { password } = req.body;
+
+    if (!userId) {
+      return res
+        .status(400)
+        .json({ error: 1, message: "User ID is required." });
+    }
+
+    if (!password) {
+      return res
+        .status(400)
+        .json({ error: 1, message: "Password is required." });
+    }
+
+    const user = await User.findByPk(userId, {
+      attributes: ["id", "password", "privateKey"],
+    });
+
+    if (!user) {
+      return res.status(404).json({ error: 1, message: "User not found." });
+    }
+
+    // Xác thực mật khẩu
+    const isMatch = bcrypt.compareSync(password, user.password);
+    if (!isMatch) {
+      return res
+        .status(401)
+        .json({ error: 1, message: "Mật khẩu không chính xác." });
+    }
+
+    // Trả private key
+    return res.status(200).json({
+      error: 0,
+      data: {
+        privateKey: user.privateKey,
+      },
+    });
+  } catch (error) {
+    console.error("getPrivateKey error:", error);
+    return res
+      .status(500)
+      .json({ error: 1, message: "Internal server error." });
   }
 };
 export const changePassword = async (req, res) => {
