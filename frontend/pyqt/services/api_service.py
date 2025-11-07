@@ -204,7 +204,7 @@ class APIService:
             return {'error': str(e)}, 500
     
     def get_user_keys(self):
-        """Lấy RSA keys của user"""
+        """Lấy RSA keys của user - CHỈ TRẢ PUBLIC KEY"""
         if self.demo_mode:
             # Mock response cho demo mode
             import time, base64, secrets
@@ -214,7 +214,6 @@ class APIService:
                 'message': 'Success (DEMO MODE)',
                 'data': {
                     'publicKey': base64.b64encode(secrets.token_bytes(256)).decode(),
-                    'privateKey': base64.b64encode(secrets.token_bytes(512)).decode()
                 }
             }, 200
         
@@ -224,7 +223,31 @@ class APIService:
                 headers=self.get_headers()
             )
             result = response.json()
-            # backend returns { error:0, data: { publicKey, privateKey } }
+            # backend returns { error:0, data: { publicKey } }
+            return result, response.status_code
+        except Exception as e:
+            return {'error': str(e)}, 500
+
+    def get_private_key(self, password):
+        """Lấy private key - YÊU CẦU XÁC NHẬN PASSWORD"""
+        if self.demo_mode:
+            import time, base64, secrets
+            time.sleep(0.3)
+            return {
+                'error': 0,
+                'message': 'Success (DEMO MODE)',
+                'data': {
+                    'privateKey': base64.b64encode(secrets.token_bytes(512)).decode()
+                }
+            }, 200
+        
+        try:
+            response = requests.post(
+                f'{self.base_url}/user/get-private-key',
+                json={'password': password},
+                headers=self.get_headers()
+            )
+            result = response.json()
             return result, response.status_code
         except Exception as e:
             return {'error': str(e)}, 500
@@ -246,6 +269,95 @@ class APIService:
             if response.status_code == 200:
                 self.set_token(None)
                 self.set_user_id(None)
+            return response.json(), response.status_code
+        except Exception as e:
+            return {'error': str(e)}, 500
+    
+    def share_file(self, file_id, recipient_email):
+        """Share file với user khác"""
+        if self.demo_mode:
+            import time
+            time.sleep(0.5)
+            return {
+                'error': 0,
+                'message': f'File đã được share với {recipient_email} (DEMO MODE)'
+            }, 200
+        
+        try:
+            response = requests.post(
+                f'{self.base_url}/file/share',
+                json={'fileId': file_id, 'recipientEmail': recipient_email},
+                headers=self.get_headers()
+            )
+            return response.json(), response.status_code
+        except Exception as e:
+            return {'error': str(e)}, 500
+    
+    def download_file_key(self, file_id, save_path):
+        """
+        Tải file .enc.key về máy (binary download)
+        
+        Args:
+            file_id: ID của file trên server
+            save_path: Đường dẫn đầy đủ nơi lưu file .enc.key
+            
+        Returns:
+            tuple: (dict/None, status_code)
+                   Success: (None, 200) - file đã lưu vào save_path
+                   Error: ({'error': msg}, status_code)
+        """
+        if self.demo_mode:
+            import time, secrets
+            time.sleep(0.5)
+            # Mock: tạo fake key file (64 bytes wrapped key)
+            with open(save_path, 'wb') as f:
+                f.write(secrets.token_bytes(64))
+            return None, 200
+        
+        try:
+            response = requests.get(
+                f'{self.base_url}/file/{file_id}/download-key',
+                headers=self.get_headers(),
+                stream=True  # Stream để tải file binary
+            )
+            
+            if response.status_code == 200:
+                # Lưu file binary
+                with open(save_path, 'wb') as f:
+                    for chunk in response.iter_content(chunk_size=8192):
+                        f.write(chunk)
+                return None, 200
+            else:
+                # Lỗi - response có thể là JSON
+                try:
+                    error_data = response.json()
+                    return error_data, response.status_code
+                except:
+                    return {'error': f'HTTP {response.status_code}'}, response.status_code
+                    
+        except Exception as e:
+            return {'error': str(e)}, 500
+    
+    def download_file(self, file_id):
+        """Tải nội dung file đã mã hóa từ server"""
+        if self.demo_mode:
+            import time, base64
+            time.sleep(0.5)
+            # Fake encrypted content
+            fake_content = b'This is demo encrypted file content'
+            return {
+                'error': 0,
+                'data': {
+                    'content': base64.b64encode(fake_content).decode(),
+                    'filename': 'demo_file.txt.enc'
+                }
+            }, 200
+        
+        try:
+            response = requests.get(
+                f'{self.base_url}/file/{file_id}/download',
+                headers=self.get_headers()
+            )
             return response.json(), response.status_code
         except Exception as e:
             return {'error': str(e)}, 500
