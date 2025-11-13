@@ -524,24 +524,19 @@ class FileOperationWidget(QWidget):
             self.add_log(f"📁 Đã chọn file: {enc_file}")
             self.start_operation()
             
-            # 2. Tìm file .enc.key cùng thư mục
-            key_file = enc_file + '.key'
-            if not os.path.exists(key_file):
-                show_message(
-                    self, 
-                    "Lỗi", 
-                    f"❌ Không tìm thấy file key!\n\n"
-                    f"Tìm kiếm: {os.path.basename(key_file)}\n"
-                    f"Tại: {os.path.dirname(key_file)}\n\n"
-                    f"Đảm bảo bạn đã nhận CẢ HAI FILE:\n"
-                    f"  • {os.path.basename(enc_file)}\n"
-                    f"  • {os.path.basename(key_file)}",
-                    "error"
-                )
+            # 2. Chọn file .enc.key thủ công (GIỐNG GIẢI MÃ CÁ NHÂN)
+            key_file, _ = QFileDialog.getOpenFileName(
+                self,
+                "Chọn file .enc.key",
+                os.path.dirname(enc_file),  # Mở thư mục chứa file .enc
+                "Key Files (*.key);;All Files (*)"
+            )
+            if not key_file:
+                self.add_log("Đã hủy chọn file key")
                 self.finish_operation()
                 return
             
-            self.add_log(f"🔑 Tìm thấy file key: {key_file}")
+            self.add_log(f"🔑 Đã chọn file key: {key_file}")
             
             # 3. Yêu cầu password để lấy private key
             password, ok = QInputDialog.getText(
