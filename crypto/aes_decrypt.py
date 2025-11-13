@@ -1,11 +1,6 @@
-"""
-AES decrypt script. Provides function to decrypt using a plain AES key.
-This script can be invoked as:
-  python aes_decrypt.py <enc_file> <out_file> <aes_key_base64|hex|raw>
-"""
+
 import sys
 import base64
-# Use package import so module resolution works when running from frontend/pyqt
 from crypto.aes_encrypt import key_expansion, add_round_key
 
 
@@ -71,18 +66,14 @@ def inv_mix_columns(state: list[int]) -> list[int]:
 
 def aes_decrypt_block(block: bytes, key_schedule: list[list[int]], Nr: int) -> bytes:
     state = list(block)
-    # Add round key cuối (w[40..43] với AES-128)
     state = add_round_key(state, sum(key_schedule[Nr*4:(Nr+1)*4], []))
-    # Vòng cuối (không có InvMixColumns)
     state = inv_shift_rows(state)
     state = inv_sub_bytes(state)
-    # Các vòng trung gian (có InvMixColumns)
     for rnd in range(Nr-1, 0, -1):
         state = add_round_key(state, sum(key_schedule[rnd*4:(rnd+1)*4], []))
         state = inv_mix_columns(state)
         state = inv_shift_rows(state)
         state = inv_sub_bytes(state)
-    # Vòng đầu
     state = add_round_key(state, sum(key_schedule[0:4], []))
     return bytes(state)
 
@@ -112,29 +103,23 @@ def decrypt_file_with_plain_key(enc_path: str, out_path: str, aes_key: bytes) ->
 
 
 def _parse_key_arg(key_arg: str) -> bytes:
-    # Try base64
     try:
         k = base64.b64decode(key_arg)
         if len(k) in (16, 24, 32):
             return k
     except Exception:
         pass
-    # Try hex
     try:
         k = bytes.fromhex(key_arg)
         if len(k) in (16, 24, 32):
             return k
     except Exception:
         pass
-    # Fallback: raw string
     k = key_arg.encode()
     if len(k) in (16, 24, 32):
         return k
     raise ValueError("Invalid AES key: provide base64, hex, or raw key with correct length")
 def decrypt_file_data(ciphertext: bytes, aes_key_b64: str) -> bytes:
-    """
-    Giải mã dữ liệu bằng AES (ECB + PKCS7)
-    """
     key = base64.b64decode(aes_key_b64)
     key_schedule, Nr = key_expansion(key)
     
@@ -155,7 +140,6 @@ def main():
     key_arg = sys.argv[3]
     key = _parse_key_arg(key_arg)
     decrypt_file_with_plain_key(enc_path, out_path, key)
-
 
 if __name__ == "__main__":
     main()
