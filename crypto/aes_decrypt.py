@@ -1,19 +1,12 @@
-# aes_decrypt.py
-# Decrypt pipeline: RSA unwrap AES key (Base64) -> AES-ECB decrypt (PKCS#7)
-
 import base64
 from typing import List
-
-# Dùng lại các hàm từ encrypt side (ECB + PKCS#7)  :contentReference[oaicite:2]{index=2}
 from aes_encrypt import key_expansion, add_round_key
 
-# ===== RSA unwrap theo format rsa_wrap_key.py (file key Base64, private key "n,d")  :contentReference[oaicite:3]{index=3}
 def rsa_decrypt(cipher: bytes, n: int, d: int) -> bytes:
     c = int.from_bytes(cipher, "big")
     m = pow(c, d, n)
     return m.to_bytes((m.bit_length() + 7) // 8, "big")
 
-# ===== Inverse AES primitives (ECB decrypt) =====
 INV_S_BOX = [
     0x52,0x09,0x6a,0xd5,0x30,0x36,0xa5,0x38,0xbf,0x40,0xa3,0x9e,0x81,0xf3,0xd7,0xfb,
     0x7c,0xe3,0x39,0x82,0x9b,0x2f,0xff,0x87,0x34,0x8e,0x43,0x44,0xc4,0xde,0xe9,0xcb,
@@ -70,18 +63,15 @@ def inv_mix_columns(state: list[int]) -> list[int]:
 
 def aes_decrypt_block(block: bytes, key_schedule: list[list[int]], Nr: int) -> bytes:
     state = list(block)
-    # Add round key cuối (w[40..43] với AES-128)
     state = add_round_key(state, sum(key_schedule[Nr*4:(Nr+1)*4], []))
-    # Vòng cuối (không có InvMixColumns)
     state = inv_shift_rows(state)
     state = inv_sub_bytes(state)
-    # Các vòng trung gian (có InvMixColumns)
     for rnd in range(Nr-1, 0, -1):
         state = add_round_key(state, sum(key_schedule[rnd*4:(rnd+1)*4], []))
         state = inv_mix_columns(state)
         state = inv_shift_rows(state)
         state = inv_sub_bytes(state)
-    # Vòng đầu
+        
     state = add_round_key(state, sum(key_schedule[0:4], []))
     return bytes(state)
 
@@ -95,7 +85,6 @@ def pkcs7_unpad(data: bytes) -> bytes:
         raise ValueError("Bad PKCS#7 padding bytes")
     return data[:-pad]
 
-# ===== API 1: Decrypt với RSA key file (khớp rsa_wrap_key.py) =====
 def decrypt_file_with_rsa_key(enc_path: str, out_path: str, enc_key_path: str, rsa_private_txt: str) -> None:
     """
     enc_path: file dữ liệu .enc (AES-ECB + PKCS7)
@@ -103,16 +92,13 @@ def decrypt_file_with_rsa_key(enc_path: str, out_path: str, enc_key_path: str, r
     enc_key_path: file chứa AES key đã ENCRYPT bằng RSA (Base64)
     rsa_private_txt: file text "n,d" (giống rsa_wrap_key.py)
     """
-    # 1) RSA unwrap khóa AES (Base64 -> bytes -> RSA decrypt -> 16B)
     enc_key_b64 = open(enc_key_path, "rb").read()
     enc_key = base64.b64decode(enc_key_b64)
     n, d = map(int, open(rsa_private_txt, "r").read().split(","))
-    aes_key = rsa_decrypt(enc_key, n, d).rjust(16, b"\x00")  # AES-128 theo rsa_wrap_key.py
+    aes_key = rsa_decrypt(enc_key, n, d).rjust(16, b"\x00") 
 
-    # 2) Key schedule từ encrypt side  :contentReference[oaicite:4]{index=4}
-    key_schedule, Nr = key_expansion(aes_key)  # với 16B -> Nr = 10
+    key_schedule, Nr = key_expansion(aes_key) 
 
-    # 3) Đọc và giải mã theo block
     ct = open(enc_path, "rb").read()
     if len(ct) % 16 != 0:
         raise ValueError("Ciphertext length must be multiple of 16 for ECB")
@@ -120,15 +106,11 @@ def decrypt_file_with_rsa_key(enc_path: str, out_path: str, enc_key_path: str, r
     for i in range(0, len(ct), 16):
         pt_chunks.append(aes_decrypt_block(ct[i:i+16], key_schedule, Nr))
     pt = b"".join(pt_chunks)
-
-    # 4) Gỡ PKCS#7  :contentReference[oaicite:5]{index=5}
     pt = pkcs7_unpad(pt)
 
-    # 5) Ghi file
     with open(out_path, "wb") as f:
         f.write(pt)
 
-# ===== API 2: Decrypt khi đã có AES key plaintext (không cần RSA) =====
 def decrypt_file_with_plain_key(enc_path: str, out_path: str, aes_key: bytes) -> None:
     key_schedule, Nr = key_expansion(aes_key)
     ct = open(enc_path, "rb").read()
@@ -141,9 +123,7 @@ def decrypt_file_with_plain_key(enc_path: str, out_path: str, aes_key: bytes) ->
     with open(out_path, "wb") as f:
         f.write(pt)
 
-# Demo nhanh (tuỳ chọn)
 if __name__ == "__main__":
-    # Test decrypt với RSA wrapped key
     decrypt_file_with_rsa_key(
         enc_path="test.enc",
         out_path="test.dec.txt",
@@ -159,4 +139,4 @@ if __name__ == "__main__":
     #     enc_key_path="aes.key.enc",
     #     rsa_private_txt="rsa_prv.txt",
     # )
-    # print("✅ Decrypt xong: test.dec2.txt")
+    # print("Decrypt xong: test.dec2.txt")
